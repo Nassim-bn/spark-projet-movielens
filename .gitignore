@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+data/
+*.pyc
+spark-warehouse/
+.DS_Store
