@@ -23,7 +23,7 @@ ratings = (
     spark.read
     .option("header", True)
     .schema(schema_ratings)
-    .csv("data/datasets/ml-latest-small/ratings.csv")
+    .csv("data/raw/ml-latest-small/ratings.csv")
 )
 
 ratings.printSchema()
@@ -44,7 +44,7 @@ movies = (
     spark.read
     .option("header", True)
     .schema(schema_movies)
-    .csv("data/datasets/ml-latest-small/movies.csv")
+    .csv("data/raw/ml-latest-small/movies.csv")
 )
 
 movies.printSchema()
@@ -91,6 +91,6 @@ ratings_propre.select("userId", "movieId", "rating", "annee").show(5)
 # === Écriture de la couche silver (Parquet, partitionnée) ===
 # Partition par année : faible cardinalité et clé naturelle
 
-ratings_propre.write.mode("overwrite").partitionBy("annee").parquet("output/silver")
+ratings_propre.write.mode("overwrite").partitionBy("annee").parquet("data/silver")
 
-print("Couche silver écrite dans output/silver")
+print("Couche silver écrite dans data/silver")
