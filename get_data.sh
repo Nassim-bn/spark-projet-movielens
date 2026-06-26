@@ -2,7 +2,7 @@
 # Telecharge le jeu MovieLens (ml-latest-small) dans data/datasets/.
 set -e
 
-mkdir -p data/datatsets
+mkdir -p data/datasets
 
 echo "== Telechargement de MovieLens ml-latest-small =="
 curl -fSL https://files.grouplens.org/datasets/movielens/ml-latest-small.zip \
