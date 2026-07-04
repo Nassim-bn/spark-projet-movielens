@@ -152,15 +152,83 @@ def ecrire_silver(ratings_propre, movies_propre):
 
 
 
-# --------------------------------------------------------------------------- #
-# Étapes suivantes : EN TODO (remplies dans d'autres branches)
-# --------------------------------------------------------------------------- #
+
+# ----- Analyses
 def transformation_et_analyses(spark):
-    raise NotImplementedError("TODO : analyses (autre branche).")
+    """Étape 2 : on relit les fichiers propres (silver) et on fait nos analyses."""
 
+    # On relit ratings et movies séparément (ils sont dans 2 dossiers différents)
+    ratings = spark.read.parquet(f"{SORTIE_SILVER}/ratings")
+    movies  = spark.read.parquet(f"{SORTIE_SILVER}/movies")
 
+    # On garde ratings en mémoire vu qu'on va s'en servir dans plusieurs analyses,
+    # ça evite à Spark de le relire depuis le disque à chaque fois
+    ratings = ratings.cache()
+    ratings.count()  # ça force le cache à se remplir tout de suite
+
+    # --- Analyse 1 : les films les mieux notés ---
+    # Question: Quels sont les films les mieux notés ?
+    # D'abord regrouper toutes les notes d'un même film pour avoir sa moyenne + combien de gens l'ont noté.
+    # On garde que les films avec au moins 50 notes, sinon un film noté 1 seule fois à 5/5 
+    # se retrouverait en haut du classement alors que ça veut rien dire.
+    analyse_1 = (
+        ratings
+        .groupBy("movieId")
+        .agg(
+            F.count("*").alias("nb_votes"),
+            F.round(F.avg("rating"), 2).alias("note_moyenne"),
+        )
+        .filter(F.col("nb_votes") >= 50)
+        .orderBy(F.desc("note_moyenne"))   # du mieux noté au moins bien noté
+    )
+
+    # --- Analyse 2 : jointure pour récupérer les titres ---
+    # Question: Quels sont les meilleurs films avec leur titre et leur genre ?
+    # On va chercher le titre + les genres dans la table movies, en collant les
+    # deux tables sur movieId. Comme movies est une petite table, on la "broadcast" 
+    # au lieu de faire un gros brassage entre les machines (shuffle), on l'envoie à
+    # tout le monde, comme ca la jointure va beaucoup  plus vite.
+    analyse_2 = (
+        analyse_1
+        .join(F.broadcast(movies), on="movieId", how="left")
+        .select("movieId", "title", "genres", "nb_votes", "note_moyenne")
+        .orderBy(F.desc("note_moyenne"))
+    )
+
+    # --- Analyse 3 : window function - top films par genre ---
+    # Question : Quels sont les meilleurs films par genre ?
+    # Problème : un film a plusieurs genres collés ("Action|Crime|Drama"). On doit
+    # d'abord éclater ça pour avoir une ligne par (film, genre).
+    films_genres = (
+        analyse_2
+        .filter(F.col("genres") != "(no genres listed)")   # on retire les films sans genre
+        .withColumn("genre", F.explode(F.split(F.col("genres"), "\\|")))
+    )
+
+    # On classe les films à l'intérieur de chaque genre, du mieux noté au moins bien.
+    # partitionBy = on fait un classement séparé PAR genre
+    # orderBy = dans chaque genre, on trie par note
+    fenetre = Window.partitionBy("genre").orderBy(F.desc("note_moyenne"))
+
+    analyse_3 = (
+        films_genres
+        .withColumn("rang", F.row_number().over(fenetre))   # numéro dans son genre
+        .filter(F.col("rang") <= 3)                         # on garde le top 3 par genre
+        .select("genre", "rang", "title", "note_moyenne", "nb_votes")
+        .orderBy("genre", "rang")
+    )
+
+    return {"analyse_1": analyse_1, "analyse_2": analyse_2, "analyse_3": analyse_3}
+
+# ----- Ecriture des résultats des analyses en Parquet (couche gold)
 def ecrire_gold(resultats):
-    raise NotImplementedError("TODO : écriture gold (autre branche).")
+    """Écrit les résultats des 3 analyses en Parquet (couche gold).
+    """
+    print("\n ÉCRITURE DANS GOLD \n")
+    for nom, df in resultats.items():
+        chemin = f"{SORTIE_GOLD}/{nom}"
+        df.coalesce(1).write.mode("overwrite").parquet(chemin)
+        print(f"  {nom} -> {chemin}")
 
 
 # --------------------------------------------------------------------------- #
@@ -168,10 +236,22 @@ def main():
     spark = get_spark("Projet MovieLens")
     print("Spark UI disponible sur http://localhost:4040")
 
-    # ===== ÉTAPE 1 : ingestion -> nettoyage -> silver (ce qu'on teste ici) =====
+    # ===== ÉTAPE 1 : ingestion -> nettoyage -> silver =====
     ratings, movies = ingestion(spark)
     ratings_propre, movies_propre = nettoyage(ratings, movies)
     ecrire_silver(ratings_propre, movies_propre)
+
+    # ===== ÉTAPE 2 : analyses -> gold =====
+    resultats = transformation_et_analyses(spark)
+    ecrire_gold(resultats)
+
+    # Petit aperçu des résultats pour vérifier que tout est cohérent
+    print("\n=== Aperçu Analyse 1 : films les mieux notés ===")
+    resultats["analyse_1"].show(5, truncate=False)
+    print("\n=== Aperçu Analyse 2 : avec titres ===")
+    resultats["analyse_2"].show(5, truncate=False)
+    print("\n=== Aperçu Analyse 3 : top par genre ===")
+    resultats["analyse_3"].show(10, truncate=False)
 
     spark.stop()
 
