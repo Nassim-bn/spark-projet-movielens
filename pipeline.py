@@ -236,22 +236,15 @@ def main():
     spark = get_spark("Projet MovieLens")
     print("Spark UI disponible sur http://localhost:4040")
 
-    # ===== ÉTAPE 1 : ingestion -> nettoyage -> silver =====
     ratings, movies = ingestion(spark)
     ratings_propre, movies_propre = nettoyage(ratings, movies)
     ecrire_silver(ratings_propre, movies_propre)
 
-    # ===== ÉTAPE 2 : analyses -> gold =====
     resultats = transformation_et_analyses(spark)
     ecrire_gold(resultats)
 
-    # Petit aperçu des résultats pour vérifier que tout est cohérent
-    print("\n=== Aperçu Analyse 1 : films les mieux notés ===")
-    resultats["analyse_1"].show(5, truncate=False)
-    print("\n=== Aperçu Analyse 2 : avec titres ===")
-    resultats["analyse_2"].show(5, truncate=False)
-    print("\n=== Aperçu Analyse 3 : top par genre ===")
-    resultats["analyse_3"].show(10, truncate=False)
+    # Pause pour explorer la Spark UI avant que la session se ferme
+    input("\n>>> Spark UI ouverte sur http://localhost:4040 — appuie sur Entrée pour quitter <<<\n")
 
     spark.stop()
 
