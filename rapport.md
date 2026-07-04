@@ -191,14 +191,31 @@ analyse_3 = (
 
 ## 4. Optimisation
 
-- Optimisation choisie : [broadcast / cache / repartition]
-- Pourquoi : [...]
-- Mesure avant/après ou extrait de plan :
+* Optimisation choisie : le broadcast, sur la jointure entre les films agrégés et la table movies.
+
+* Pourquoi : movies est une petite table (9 742 lignes). Normalement, pour joindre
+  deux tables, Spark doit déplacer les données entre les machines pour rapprocher
+  les lignes qui ont le même movieId (c'est le shuffle, l'étape la plus lente vue
+  en cours). Avec le broadcast, on envoie la petite table à toutes les machines,
+  du coup chacune peut faire la jointure toute seule, sans avoir à déplacer les
+  données. On évite donc le shuffle.
+
+* Mesure avant / après :
 ```
-avant : [...] s   |   après : [...] s
-(ou extrait de explain() montrant le changement)
+sans broadcast : 0.378 s
+avec broadcast : 0.254 s   (environ 33 % plus rapide)
 ```
-- Ce que ça change : [...]
+
+* (On lance chaque jointure une première fois "à vide" avant de chronométrer, pour
+  ne pas mesurer le temps de démarrage de Spark et avoir un temps plus juste.)
+
+* Ce que ça change : sans broadcast, Spark déplace et trie les deux tables (on le
+  voit dans le plan avec deux étapes "Exchange", qui sont les shuffles). Avec
+  broadcast, il n'y a plus ce déplacement, d'où le gain de temps.
+
+* Remarque : sur notre petit jeu de données, le gain est faible. Mais sur une
+  grosse table, éviter le shuffle ferait une grosse différence, car déplacer des
+  millions de lignes entre les machines coûte très cher.
 
 ---
 
