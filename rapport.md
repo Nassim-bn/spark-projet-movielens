@@ -1,37 +1,35 @@
-# Rapport de projet - Pipeline Spark (Jour 4)
+# Rapport de projet - Pipeline Spark
 
 
 - **Équipe** : **Nassim Benchikh**, **Harold Lerner**
 - **Jeu de données** : **MovieLens**
-- **Date** : [...]
+- **Date** : 04/07/2026
 
 ---
 ## 1. Jeu de données et schéma cible
 
-- Source et volume : MovieLens ml-latest-small (GroupLens). 100 836 notes,
-  610 utilisateurs, 9 724 films notés (sur 9 742 au catalogue). 4 fichiers CSV ;
-  on exploite ratings et movies (tags et links non utilisés pour le socle).
-- Schéma cible (colonnes retenues, types) :
-  - ratings : userId (int), movieId (int), rating (double), timestamp (long), annee (int, dérivée)
-  - movies  : movieId (int), title (string), genres (string, séparés par |), has_genres (bool, dérivée)
-- Questions métier visées : [à compléter une fois les 3 analyses choisies]
-
+* Source et volume : MovieLens ml-latest-small (GroupLens). 100 836 notes, 610 utilisateurs, 9 724 films notés (sur 9 742 au catalogue). 4 fichiers CSV ; on exploite ratings et movies (tags et links non utilisés pour le socle).
+* Schéma cible (colonnes retenues, types) :
+   * ratings : userId (int), movieId (int), rating (double), timestamp (long), annee (int, dérivée)
+   * movies : movieId (int), title (string), genres (string, séparés par |), genres_present (bool, dérivée)
+* Questions métier visées :
+   * Quels sont les films les mieux notés du catalogue ? (agrégation)
+   * Quels titres portent ces films les mieux notés ? (jointure)
+   * Quels sont les 3 meilleurs films dans chaque genre ? (window)
 ## 2. Pipeline (bronze -> silver -> gold)
 
-- Nettoyage ratings :
-  - Manquants : na.drop sur (userId, movieId, rating).
-  - Aberrants : notes filtrées hors de l'échelle 0.5–5.0.
-  - Doublons : dropDuplicates sur (userId, movieId).
-  - Lignes brutes : 100 836 | après : [TON CHIFFRE] | écartées : [X] %
-- Nettoyage movies :
-  - Manquants (movieId, title) et doublons (movieId) retirés.
-  - Films sans genre marqués (has_genres=false) plutôt que supprimés : [N] films.
-- Enrichissement : colonne `annee` dérivée du timestamp (ratings).
-- Partitionnement silver :
-  - ratings : partitionné par `annee` (faible cardinalité, ~23 valeurs) →
-    permet le partition pruning.
-  - movies : un seul fichier (coalesce(1)), table de référence légère.
-
+* Nettoyage ratings :
+   * Manquants : na.drop sur (userId, movieId, rating).
+   * Aberrants : notes filtrées hors de l'échelle 0.5–5.0.
+   * Doublons : dropDuplicates sur (userId, movieId).
+   * Lignes brutes : 100 836 | après : 100 836 | écartées : 0 % (jeu déjà sain).
+* Nettoyage movies :
+   * Manquants (movieId, title) et doublons (movieId) retirés.
+   * Films sans genre marqués (genres_present=false) plutôt que supprimés : 34 films.
+* Enrichissement : colonne `annee` dérivée du timestamp (ratings).
+* Partitionnement silver :
+   * ratings : partitionné par `annee` (faible cardinalité, ~23 valeurs) → permet le partition pruning.
+   * movies : un seul fichier (coalesce(1)), table de référence légère.
 ---
 
 ## 3. Analyses
