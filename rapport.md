@@ -251,17 +251,41 @@ avec broadcast : 0.254 s   (environ 33 % plus rapide)
 
 ---
 
-## 6. Exploration au-delà du cours
+## 6. Exploration 
 
-- Piste choisie : [AQE et partitions / skew et salting / UDF vs pandas_udf / table gérée et upsert /
-  spark-submit / pushdown mesuré / benchmark formats / streaming ou MLlib]
-- Question : [...]
-- Protocole (ce qu'on a fait varier, ce qui reste fixe) : [...]
-- Mesures :
-```
-[...]
-```
-- Conclusion (même si négative ou contre-intuitive) : [...]
+* Piste choisie : **pushdown mesuré sur la couche Parquet partitionnée (ratings,
+  partitionné par annee).**
+
+* Ce qu'on a testé : on filtre ratings de différentes façons et on regarde, dans
+  la Spark UI, combien de fichiers et d'octets Spark lit vraiment.
+
+* 1. Partition pruning (filtre sur annee) :
+  - Sans filtre (Query 0) : 23 fichiers lus, 874,4 KiB, 23 partitions, 100 836 lignes.
+  - Filtre annee = 2018 (Query 1) : 1 seul fichier lu, 60,0 KiB, 1 partition, 6 418 lignes.
+  - Le plan montre PartitionFilters: [annee = 2018]. Spark n'ouvre que le dossier
+    annee=2018/ : il lit ~15x moins de données. C'est la preuve que notre
+    partitionnement par année sert vraiment.
+
+* 2. Predicate pushdown (filtre sur rating, colonne interne, Query 2) :
+  - Le plan montre PushedFilters: [GreaterThanOrEqual(rating, 4.5)].
+  - Mais Spark lit quand même les 23 fichiers (874,4 KiB) : comme rating n'est pas
+    une colonne de partition, il doit ouvrir tous les fichiers, même s'il filtre à
+    l'intérieur.
+
+* Ce qu'on en conclut : les deux mécanismes évitent de traiter des données inutiles,
+  mais différemment. Le partition pruning est le plus puissant : il saute des
+  fichiers entiers (15x moins lu ici), mais seulement sur la colonne de
+  partitionnement (annee). Le predicate pushdown, lui, marche sur n'importe quelle
+  colonne mais doit ouvrir tous les fichiers. Cela confirme le choix de partitionner
+  par année : sur un gros volume, sauter 22 dossiers sur 23 ferait une énorme
+  différence.
+
+
+  ![alt text](docs/captures/exploration1.png)
+  ![alt text](docs/captures/exploration2.png)
+  ![alt text](docs/captures/exploration3.png)
+
+
 
 ---
 
