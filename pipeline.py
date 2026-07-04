@@ -18,6 +18,13 @@ SORTIE_GOLD   = "data/output/analyses"   # résultats des aggregations, jointure
 # Raings max et min des films
 RATING_MIN, RATING_MAX = 0.5, 5.0
 
+# Seuil minimum de votes pour qu'un film entre dans le classement "mieux notés" (analyse jointure).
+# Déterminé empiriquement : sur ml-latest-small, le 95e percentile de n_votes est ~46 (mean=10.4,
+# median=3, 90e percentile=26). En dessous de 50 votes, le top est dominé par des films à 1-2 notes
+# (moyenne instable) ; à 50, le classement se stabilise sur des films reconnus (Shawshank, Godfather,
+# Fight Club...) tout en gardant 450 films (4.6% du catalogue noté) éligibles.
+SEUIL_VOTES_FILM = 50
+
 
 # ----- Schémas explicites pour l'ingestion de ratings et movies
 
@@ -152,15 +159,72 @@ def ecrire_silver(ratings_propre, movies_propre):
 
 
 
+# ----- ANALYSE 2 : JOINTURE
+
+def analyse_jointure(spark):
+    """
+    Analyse 2 - jointure : films les mieux notés, enrichis avec titre et genres.
+    - Relit la couche silver (jamais le brut).
+    - Agrège ratings par movieId (nombre de votes, note moyenne).
+    - Joint avec movies (broadcast, car movies est une petite table de référence).
+    """
+    print("\n ANALYSE 2 : JOINTURE (films les mieux notés) \n")
+
+    ratings_silver = spark.read.parquet(f"{SORTIE_SILVER}/ratings")
+    movies_silver = spark.read.parquet(f"{SORTIE_SILVER}/movies")
+
+    stats_films = (
+        ratings_silver
+        .groupBy("movieId")
+        .agg(
+            F.count("*").alias("n_votes"),
+            F.round(F.avg("rating"), 3).alias("note_moyenne"),
+        )
+    )
+
+    # Sans seuil, le top est dominé par des films à 1-2 votes (moyenne non significative).
+    # On filtre sur SEUIL_VOTES_FILM (voir justification à la définition de la constante).
+    avant_seuil = stats_films.count()
+    stats_films = stats_films.filter(F.col("n_votes") >= SEUIL_VOTES_FILM)
+    apres_seuil = stats_films.count()
+    print(f"Films avant seuil : {avant_seuil} | après seuil (>= {SEUIL_VOTES_FILM} votes) : {apres_seuil}")
+
+    top_films = (
+        stats_films
+        .join(F.broadcast(movies_silver), on="movieId", how="inner")
+        .select("movieId", "title", "genres", "n_votes", "note_moyenne")
+        .orderBy(F.desc("note_moyenne"), F.desc("n_votes"))
+    )
+
+    # Vérification de cardinalité : movies est dédupliqué sur movieId en amont (nettoyage),
+    # donc le join ne doit pas dupliquer de lignes.
+    print(f"Films agrégés (après seuil) : {stats_films.count()} | après jointure : {top_films.count()}")
+    print("Plan d'exécution (vérifier la présence d'un BroadcastHashJoin) :")
+    top_films.explain()
+    print("Top 15 films les mieux notés :")
+    top_films.show(15, truncate=False)
+
+    return top_films
+
+
 # --------------------------------------------------------------------------- #
 # Étapes suivantes : EN TODO (remplies dans d'autres branches)
 # --------------------------------------------------------------------------- #
 def transformation_et_analyses(spark):
-    raise NotImplementedError("TODO : analyses (autre branche).")
+    resultats = {}
+    resultats["jointure_top_films"] = analyse_jointure(spark)
+    # --- Analyse 1 : agrégation (TODO, branche feature/analyse-agregation-gold) ---
+    # --- Analyse 3 : window function (TODO, branche feature/analyse-window-gold) ---
+    return resultats
 
 
 def ecrire_gold(resultats):
-    raise NotImplementedError("TODO : écriture gold (autre branche).")
+    """Écrit chaque résultat d'analyse en CSV (1 fichier, avec header) sous SORTIE_GOLD."""
+    print("\n ÉCRITURE GOLD \n")
+    for nom, df in resultats.items():
+        chemin = f"{SORTIE_GOLD}/{nom}"
+        df.coalesce(1).write.mode("overwrite").option("header", True).csv(chemin)
+        print(f"{nom} -> {chemin}")
 
 
 # --------------------------------------------------------------------------- #
@@ -172,6 +236,10 @@ def main():
     ratings, movies = ingestion(spark)
     ratings_propre, movies_propre = nettoyage(ratings, movies)
     ecrire_silver(ratings_propre, movies_propre)
+
+    # ===== ÉTAPE 2 : silver -> gold (analyses) =====
+    resultats = transformation_et_analyses(spark)
+    ecrire_gold(resultats)
 
     spark.stop()
 
