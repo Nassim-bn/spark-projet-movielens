@@ -230,18 +230,18 @@ avec broadcast : 0.254 s   (environ 33 % plus rapide)
 
 - Captures :
 
-![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.23.18.png>)
+![alt text](<docs/captures/image1.png>)
 
-![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.25.20.png>)
-
-
-![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.28.30.png>)
+![alt text](<docs/captures/image2.png>)
 
 
-![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.27.01.png>)
+![alt text](<docs/captures/image3.png>)
 
 
-![alt text](image.png)
+![alt text](<docs/captures/image4.png>)
+
+
+![alt text](<docs/captures/image5.png>)
 
 - Commentaire : le shuffle déplace ici très peu de données (708 B, 12 records),
   car le jeu est petit. Mais c'est bien l'étape la plus coûteuse en théorie :
