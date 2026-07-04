@@ -221,11 +221,33 @@ avec broadcast : 0.254 s   (environ 33 % plus rapide)
 
 ## 5. Lecture de la Spark UI
 
-- Job observé : [...]
-- Où se produit le shuffle (`Exchange`) : [...]
-- Nombre de stages et de tasks : [...]
-- Capture(s) : [insérer]
-- Commentaire : [...]
+- Job observé : une agrégation groupBy sur movieId (calcul de la note moyenne et du nombre de votes par film), vue dans l'onglet SQL/DataFrame. Sur l'ensemble du pipeline, la Spark UI compte 50 jobs pour environ 57 s au total.
+
+- Où se produit le shuffle (`Exchange`) : entre les deux étapes HashAggregate. Le
+  plan montre l'enchaînement HashAggregate -> Exchange -> HashAggregate. Le premier HashAggregate calcule un résultat partiel sur chaque machine, puis l'Exchange redistribue les données entre les machines pour regrouper les notes d'un même film, et le second HashAggregate produit le résultat final. C'est l'Exchange qui est le shuffle.
+
+- Nombre de stages et de tasks : l'agrégation se fait en 2 stages séparés par le shuffle. Dans la liste des jobs, beaucoup de stages apparaissent comme "skipped" (ex. 12 à 15 skipped) : c'est Spark qui réutilise des calculs déjà faits grâce au cache, au lieu de les relancer.
+
+- Captures :
+
+![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.23.18.png>)
+
+![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.25.20.png>)
+
+
+![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.28.30.png>)
+
+
+![alt text](<docs/captures/Capture d’écran 2026-07-04 à 15.27.01.png>)
+
+
+![alt text](image.png)
+
+- Commentaire : le shuffle déplace ici très peu de données (708 B, 12 records),
+  car le jeu est petit. Mais c'est bien l'étape la plus coûteuse en théorie :
+  sur un gros volume, redistribuer des millions de lignes entre les machines
+  serait très lourd. C'est exactement ce que notre optimisation broadcast (section 4)
+  cherche à éviter sur la jointure.
 
 ---
 
