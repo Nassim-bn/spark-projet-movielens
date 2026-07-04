@@ -25,6 +25,15 @@ RATING_MIN, RATING_MAX = 0.5, 5.0
 # Fight Club...) tout en gardant 450 films (4.6% du catalogue noté) éligibles.
 SEUIL_VOTES_FILM = 50
 
+# Seuil minimum de votes pour qu'un film entre dans le classement par genre (analyse window).
+# Déterminé empiriquement sur les 19 genres présents : à 20 votes, chaque genre garde au moins
+# TOP_N=5 films éligibles (le pire cas, Documentary, tombe pile à 5) ; à 30, Documentary n'en a
+# plus que 4 (top-N incomplet). 20 est donc le seuil le plus strict qui garantit un top-5 partout.
+SEUIL_VOTES_GENRE = 20
+
+# Nombre de films classés par genre dans l'analyse window.
+TOP_N = 5
+
 
 # ----- Schémas explicites pour l'ingestion de ratings et movies
 
@@ -207,14 +216,69 @@ def analyse_jointure(spark):
     return top_films
 
 
-# --------------------------------------------------------------------------- #
-# Étapes suivantes : EN TODO (remplies dans d'autres branches)
+# ----- ANALYSE 3 : WINDOW FUNCTION
+
+def analyse_fenetre(spark):
+    """
+    Analyse 3 - window function : top-N films les mieux notés, par genre.
+    - Relit la couche silver (jamais le brut).
+    - Explose la colonne genres (un film multi-genres apparaît dans chacun de ses genres).
+    - Agrège ratings par (genre, movieId, title), filtre sur un seuil de votes minimum.
+    - Classe les films au sein de chaque genre (Window.partitionBy) par note décroissante.
+    """
+    print("\n ANALYSE 3 : WINDOW FUNCTION (top films par genre) \n")
+
+    ratings_silver = spark.read.parquet(f"{SORTIE_SILVER}/ratings")
+    movies_silver = spark.read.parquet(f"{SORTIE_SILVER}/movies")
+
+    genres_par_film = (
+        movies_silver
+        .filter(F.col("genres_present"))
+        .withColumn("genre", F.explode(F.split(F.col("genres"), "\\|")))
+        .select("movieId", "title", "genre")
+    )
+
+    stats_genre_film = (
+        ratings_silver
+        .join(genres_par_film, "movieId")
+        .groupBy("genre", "movieId", "title")
+        .agg(
+            F.count("*").alias("n_votes"),
+            F.round(F.avg("rating"), 3).alias("note_moyenne"),
+        )
+    )
+
+    # Sans seuil, le rang 1 de chaque genre serait souvent un film à 1-2 votes.
+    avant_seuil = stats_genre_film.count()
+    stats_genre_film = stats_genre_film.filter(F.col("n_votes") >= SEUIL_VOTES_GENRE)
+    apres_seuil = stats_genre_film.count()
+    print(f"Paires (genre, film) avant seuil : {avant_seuil} | après seuil (>= {SEUIL_VOTES_GENRE} votes) : {apres_seuil}")
+
+    fenetre_genre = Window.partitionBy("genre").orderBy(F.desc("note_moyenne"), F.desc("n_votes"))
+    top_par_genre = (
+        stats_genre_film
+        .withColumn("rang", F.row_number().over(fenetre_genre))
+        .filter(F.col("rang") <= TOP_N)
+        .select("genre", "rang", "title", "note_moyenne", "n_votes")
+        .orderBy("genre", "rang")
+    )
+
+    n_genres = top_par_genre.select("genre").distinct().count()
+    print(f"Genres couverts : {n_genres} | lignes du classement (attendu <= {n_genres} * {TOP_N}) : {top_par_genre.count()}")
+    print("Plan d'exécution (vérifier la présence d'un Window/Exchange partitionné par genre) :")
+    top_par_genre.explain()
+    print("Top 5 pour quelques genres :")
+    top_par_genre.filter(F.col("genre").isin("Drama", "Comedy", "Action")).show(15, truncate=False)
+
+    return top_par_genre
+
+
 # --------------------------------------------------------------------------- #
 def transformation_et_analyses(spark):
     resultats = {}
     resultats["jointure_top_films"] = analyse_jointure(spark)
+    resultats["window_top_par_genre"] = analyse_fenetre(spark)
     # --- Analyse 1 : agrégation (TODO, branche feature/analyse-agregation-gold) ---
-    # --- Analyse 3 : window function (TODO, branche feature/analyse-window-gold) ---
     return resultats
 
 
