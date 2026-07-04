@@ -18,6 +18,8 @@
    * Quels sont les 3 meilleurs films dans chaque genre ? (window)
 ## 2. Pipeline (bronze -> silver -> gold)
 
+Le pipeline suit une architecture en trois couches : bronze (CSV bruts lus tels quels), silver (données nettoyées et typées, écrites en Parquet) et gold (résultats d'analyses). Ci-dessous, le passage bronze -> silver (nettoyage + écriture), le gold étant produit par les analyses de la section 3.
+
 * Nettoyage ratings :
    * Manquants : na.drop sur (userId, movieId, rating).
    * Aberrants : notes filtrées hors de l'échelle 0.5–5.0.
@@ -243,12 +245,7 @@ avec broadcast : 0.254 s   (environ 33 % plus rapide)
 
 ![alt text](<docs/captures/image5.png>)
 
-- Commentaire : le shuffle déplace ici très peu de données (708 B, 12 records),
-  car le jeu est petit. Mais c'est bien l'étape la plus coûteuse en théorie :
-  sur un gros volume, redistribuer des millions de lignes entre les machines
-  serait très lourd. C'est exactement ce que notre optimisation broadcast (section 4)
-  cherche à éviter sur la jointure.
-
+- Commentaire : le shuffle déplace ici très peu de données (708 B, 12 records), car le jeu est petit. Mais c'est bien l'étape la plus coûteuse en théorie : sur un gros volume, redistribuer des millions de lignes entre les machines serait très lourd. C'est exactement ce que notre optimisation broadcast (section 4) cherche à éviter sur la jointure, et que le partition pruning (section 6) évite côté lecture : dans les deux cas, on cherche à ne pas brasser de données inutiles.
 ---
 
 ## 6. Exploration 
@@ -291,6 +288,19 @@ avec broadcast : 0.254 s   (environ 33 % plus rapide)
 
 ## 7. Ce qu'on a appris et limites
 
-- Ce qui a marché : [...]
-- Ce qui a bloqué : [...]
-- Ce qu'on ferait avec plus de temps : [...]
+- Ce qui a marché : le pipeline tourne de bout en bout (brut -> silver -> gold) et
+  se relance à zéro sans erreur. Le schéma explicite (StructType) a évité les
+  mauvais types. Le partitionnement par année s'est révélé utile (prouvé dans
+  l'exploration : 15x moins de données lues sur une seule année). Les 3 analyses
+  donnent des résultats cohérents (des classiques du cinéma remontent en tête).
+
+- Ce qui a bloqué : sur MovieLens, le nettoyage n'écarte quasiment aucune ligne
+  (jeu déjà propre), donc les statistiques de nettoyage sont peu spectaculaires.
+  Pour l'optimisation broadcast, Spark broadcaste déjà tout seul les petites tables
+  (AQE) : on a dû désactiver ce comportement pour mesurer une vraie différence de
+  plan. Et sur notre petit volume, les gains de temps restent modestes.
+
+- Ce qu'on ferait avec plus de temps : tester le pipeline sur un volume plus gros
+  (MovieLens full, ~33M de notes) pour voir les optimisations vraiment peser ;
+  exploiter le fichier tags pour une analyse supplémentaire ; et remplacer la
+  réécriture complète de la silver par une mise à jour incrémentale.
